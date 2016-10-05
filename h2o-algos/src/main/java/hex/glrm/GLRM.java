@@ -628,16 +628,22 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
         double step = _parms._init_step_size;   // Initial step size
         int steps_in_row = 0;                   // Keep track of number of steps taken that decrease objective
 
+        long curtime = 0;
         while (!isDone(model, steps_in_row, step)) {
           _job.update(1, "Iteration " + String.valueOf(model._output._iterations+1) + " of alternating minimization");   // One unit of work
 
           // TODO: Should step be divided by number of original or expanded (with 0/1 categorical) cols?
           // 1) Update X matrix given fixed Y
+
+          // find out how much time it takes to update x
+          curtime = System.currentTimeMillis();
           UpdateX xtsk = new UpdateX(_parms, yt, step/_ncolA, overwriteX, _ncolA, _ncolX, dinfo._cats, model._output._normSub, model._output._normMul, model._output._lossFunc, weightId);
           xtsk.doAll(dinfo._adaptedFrame);
           model._output._updates++;
+          Log.info("Time taken to updateX is "+(System.currentTimeMillis()-curtime)/1000);
 
           // 2) Update Y matrix given fixed X
+          curtime = System.currentTimeMillis();
           if (model._output._updates < _parms._max_updates) {    // If max_updates is odd, we will terminate after the X update
             UpdateY ytsk = new UpdateY(_parms, yt, step/_ncolA, _ncolA, _ncolX, dinfo._cats, model._output._normSub, model._output._normMul, model._output._lossFunc, weightId);
             double[][] yttmp = ytsk.doAll(dinfo._adaptedFrame)._ytnew;
@@ -645,15 +651,19 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
             yreg = ytsk._yreg;
             model._output._updates++;
           }
+          Log.info("Time taken to updateY is "+(System.currentTimeMillis()-curtime)/1000);
 
           // 3) Compute average change in objective function
+          curtime = System.currentTimeMillis();
           objtsk = new ObjCalc(_parms, ytnew, _ncolA, _ncolX, dinfo._cats, model._output._normSub, model._output._normMul, model._output._lossFunc, weightId);
           objtsk.doAll(dinfo._adaptedFrame);
           double obj_new = objtsk._loss + _parms._gamma_x * xtsk._xreg + _parms._gamma_y * yreg;
+          Log.info("Time taken to calculate new objective function value is "+(System.currentTimeMillis()-curtime)/1000);
           model._output._avg_change_obj = (model._output._objective - obj_new) / nobs;
           model._output._iterations++;
 
           // step = 1.0 / model._output._iterations;   // Step size \alpha_k = 1/iters
+          curtime = System.currentTimeMillis();
           if (model._output._avg_change_obj > 0) {   // Objective decreased this iteration
             yt = ytnew;
             model._output._archetypes_raw = ytnew;  // Need full archetypes object for scoring
@@ -670,13 +680,16 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
               _job.update(0,"Iteration " + model._output._iterations + ": Objective increased to " + obj_new + "; reducing step size to " + step);
             }
           }
+          Log.info("Time taken to set the step size is "+(System.currentTimeMillis()-curtime)/1000);
 
           // Add to scoring history
+          curtime = System.currentTimeMillis();
           model._output._training_time_ms = ArrayUtils.copyAndFillOf(model._output._training_time_ms, model._output._training_time_ms.length+1, System.currentTimeMillis());
           model._output._history_step_size = ArrayUtils.copyAndFillOf(model._output._history_step_size, model._output._history_step_size.length+1, step);
           model._output._history_objective = ArrayUtils.copyAndFillOf(model._output._history_objective, model._output._history_objective.length+1, model._output._objective);
           model._output._scoring_history = createScoringHistoryTable(model._output);
           model.update(_job); // Update model in K/V store
+          Log.info("Time taken to history of run is "+(System.currentTimeMillis()-curtime)/1000);
         }
 
         // 4) Save solution to model output
